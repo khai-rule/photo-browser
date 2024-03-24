@@ -3,10 +3,19 @@
 import React, { useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import { motion } from "framer-motion";
-import LocomotiveScroll from "locomotive-scroll";
 
 function Photos() {
-  const locomotiveScroll = new LocomotiveScroll();
+  useEffect(() => {
+    let scroll: import("locomotive-scroll");
+    import("locomotive-scroll").then((locomotiveModule) => {
+      scroll = new locomotiveModule.default();
+    });
+
+    return () => {
+      if (scroll) scroll.destroy();
+    };
+  });
+
   const [images, setImages] = useState<string[]>([]);
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
