@@ -8,7 +8,7 @@ export async function GET(
   try {
     const drive = google.drive({
       version: "v3",
-      auth: "AIzaSyAx8KoQGelPmvhmlORCCbb55wtY4UUNS0k",
+      auth: process.env.GOOGLE_DRIVE_API as string,
     });
 
     const folderId = params.id;
