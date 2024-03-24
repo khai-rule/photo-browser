@@ -1,12 +1,15 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { use, useEffect, useState } from "react";
 import Image from "next/image";
 import { motion } from "framer-motion";
+import LocomotiveScroll from "locomotive-scroll";
 
-function Photos() {
+function Preview() {
+  const [images, setImages] = useState<string[]>([]);
+
   useEffect(() => {
-    let scroll: import("locomotive-scroll");
+    let scroll: LocomotiveScroll | undefined;
     import("locomotive-scroll").then((locomotiveModule) => {
       scroll = new locomotiveModule.default();
     });
@@ -14,27 +17,28 @@ function Photos() {
     return () => {
       if (scroll) scroll.destroy();
     };
-  });
+  }, []);
 
-  const [images, setImages] = useState<string[]>([]);
-
-  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const fileList = event.target.files;
-    if (fileList) {
-      const uploadedImages = Array.from(fileList).map((file) =>
-        URL.createObjectURL(file),
-      );
-      setImages((prevImages) => [...prevImages, ...uploadedImages]);
+  useEffect(() => {
+    const images = localStorage.getItem("uploadedImages");
+    if (images) {
+      setImages(images ? JSON.parse(images) : ([] as string[]));
     }
-  };
+  }, []);
 
   images.sort(() => Math.random() - 0.5);
   const numImages = images.length;
   const quarter = Math.ceil(numImages / 4);
-  const firstQuarter = images.slice(0, quarter);
-  const secondQuarter = images.slice(quarter, quarter * 2);
-  const thirdQuarter = images.slice(quarter * 2, quarter * 3);
-  const fourthQuarter = images.slice(quarter * 3);
+  const firstQuarter = images.slice(0, Math.ceil(numImages * 0.18));
+  const secondQuarter = images.slice(
+    Math.ceil(numImages * 0.18),
+    Math.ceil(numImages * 0.48),
+  );
+  const thirdQuarter = images.slice(
+    Math.ceil(numImages * 0.48),
+    Math.ceil(numImages * 0.7),
+  );
+  const fourthQuarter = images.slice(Math.ceil(numImages * 0.7));
 
   useEffect(() => {
     let lastTimestamp: number = performance.now();
@@ -89,16 +93,6 @@ function Photos() {
 
   return (
     <main className="flex flex-col">
-      {images.length === 0 && (
-        <div className="flex w-full justify-center">
-          <input
-            type="file"
-            className="file-input  my-16 max-w-xs "
-            onChange={handleFileChange}
-            multiple
-          />
-        </div>
-      )}
       <section className="grid w-full grid-cols-4 gap-5 overflow-hidden">
         <div data-scroll data-scroll-speed="7" className="flex flex-col gap-5">
           {firstQuarter.map((image, index) => {
@@ -167,4 +161,4 @@ function Photos() {
   );
 }
 
-export default Photos;
+export default Preview;
