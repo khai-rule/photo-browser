@@ -36,6 +36,7 @@ function MenuButton() {
                 ry={6}
                 reversed={true}
                 text="Menu"
+                textPathProps={{ style: { fill: "#fff" } }}
                 textProps={{
                   style: {
                     fontSize: "0.875rem",

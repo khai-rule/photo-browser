@@ -1,9 +1,12 @@
 "use client";
+import TransitionLink from "@/components/TransitionLink";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { animatePageOut } from "@/animations";
 
 export default function Home() {
   const [inputValue, setInputValue] = useState("");
+
   const router = useRouter();
 
   const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -16,7 +19,7 @@ export default function Home() {
       localStorage.setItem("uploadedImages", JSON.stringify(uploadedImages));
     }
 
-    router.push("/preview");
+    animatePageOut("/preview", router);
   };
 
   function handleButtonClick() {
@@ -37,7 +40,7 @@ export default function Home() {
             `https://drive.google.com/thumbnail?id=${data.id}&sz=w1000`,
         );
         localStorage.setItem("uploadedImages", JSON.stringify(images));
-        router.push("/preview");
+        animatePageOut("/preview", router);
       })
       .catch((error) => {
         console.error("Error fetching images:", error);
@@ -47,6 +50,8 @@ export default function Home() {
   return (
     <main className="flex w-full justify-center">
       <div className="flex flex-col">
+        <h1>Contact Studio</h1>
+        <p>Upload images or type a folder ID to view images</p>
         <div>
           <input
             type="file"

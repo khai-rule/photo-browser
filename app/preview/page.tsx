@@ -71,7 +71,7 @@ function Preview() {
         clearTimeout(timeoutId);
         timeoutId = setTimeout(() => {
           requestId = requestAnimationFrame(scrollDown);
-        }, 5000);
+        }, 4000);
       }
     });
 
