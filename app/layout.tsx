@@ -4,6 +4,7 @@ import BottomNav from "@/components/BottomNav";
 import TopNav from "@/components/TopNav";
 
 import "./globals.css";
+import SmoothScroll from "@/components/SmoothScroll";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -22,9 +23,11 @@ export default function RootLayout({
       <body
         className={`${inter.className} bg-base-100 text-base-content antialiased`}
       >
-        <TopNav />
-        {children}
-        <BottomNav />
+        <SmoothScroll>
+          <TopNav />
+          {children}
+          <BottomNav />
+        </SmoothScroll>
       </body>
     </html>
   );

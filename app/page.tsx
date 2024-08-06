@@ -1,11 +1,11 @@
 "use client";
-import TransitionLink from "@/components/TransitionLink";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { animatePageOut } from "@/animations";
 
 export default function Home() {
   const [inputValue, setInputValue] = useState("");
+  const [buttonClicked, setButtonClicked] = useState(false);
 
   const router = useRouter();
 
@@ -23,6 +23,7 @@ export default function Home() {
   };
 
   function handleButtonClick() {
+    setButtonClicked((prev) => !prev);
     const parts = inputValue.split("/");
     const folderId = parts[parts.length - 1];
 
@@ -44,6 +45,7 @@ export default function Home() {
       })
       .catch((error) => {
         console.error("Error fetching images:", error);
+        setButtonClicked((prev) => !prev);
       });
   }
 
@@ -67,7 +69,11 @@ export default function Home() {
             className="input input-bordered w-full max-w-xs"
             onChange={(event) => setInputValue(event.target.value)}
           />
-          <button className="btn" onClick={handleButtonClick}>
+          <button
+            className="btn"
+            onClick={handleButtonClick}
+            disabled={buttonClicked}
+          >
             Submit
           </button>
         </div>
