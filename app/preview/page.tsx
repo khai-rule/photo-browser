@@ -1,371 +1,58 @@
-"use client";
+import { createClient } from "@/lib/supabase/server";
+import { redirect } from "next/navigation";
+import GalleryClient from "./GalleryClient";
 
-import React, { use, useEffect, useState } from "react";
-import Image from "next/image";
-import { motion } from "framer-motion";
-import LazyLoad from "react-lazy-load";
-import _ from "lodash";
-import InfiniteScroll from "react-infinite-scroll-component";
+/**
+ * Preview page — Server Component.
+ *
+ * Fetches the authenticated user's images from Supabase, resolves
+ * signed URLs for uploaded files (private bucket), then hands the
+ * plain URL array off to GalleryClient for client-side rendering.
+ */
+export default async function PreviewPage() {
+  const supabase = await createClient();
 
-function Preview() {
-  const [allImages, setAllImages] = useState<string[]>([]);
-  const [visibleCount, setVisibleCount] = useState<number>(20);
-  const [firstColumn, setFirstColumn] = useState<string[]>([]);
-  const [secondColumn, setSecondColumn] = useState<string[]>([]);
-  const [thirdColumn, setThirdColumn] = useState<string[]>([]);
-  const [fourthColumn, setFourthColumn] = useState<string[]>([]);
+  // Verify authentication server-side (middleware also guards this route,
+  // but we double-check here for defence in depth)
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
 
-  const scrollSpeeds = {
-    firstColumn: 8,
-    secondColumn: 11,
-    thirdColumn: 7,
-    fourthColumn: 10,
-  };
+  if (!user) {
+    redirect("/login");
+  }
 
-  useEffect(() => {
-    // let scroll: LocomotiveScroll | undefined;
-    // import("locomotive-scroll").then((locomotiveModule) => {
-    //   scroll = new locomotiveModule.default();
-    // });
+  // ── Fetch all image rows for this user ──────────────────────────────────
+  const { data: rows, error } = await supabase
+    .from("images")
+    .select("url, source")
+    .eq("user_id", user.id)
+    .order("created_at", { ascending: false });
 
-    const storedImages = localStorage.getItem("uploadedImages");
-    if (storedImages) {
-      try {
-        const parsed = JSON.parse(storedImages) as string[];
-        const shuffled = [...parsed].sort(() => Math.random() - 0.5);
-        setAllImages(shuffled);
-      } catch (error) {
-        console.error("Error parsing uploadedImages:", error);
+  if (error) {
+    console.error("Failed to fetch images:", error);
+  }
+
+  const imageRows = rows ?? [];
+
+  // ── Resolve URLs ────────────────────────────────────────────────────────
+  // Uploaded images: `url` stores the storage path → generate a 1-hour signed URL.
+  // GDrive images:   `url` stores the full thumbnail URL → use as-is.
+  const resolvedUrls = await Promise.all(
+    imageRows.map(async (row) => {
+      if (row.source === "upload") {
+        const { data } = await supabase.storage
+          .from("gallery-images")
+          .createSignedUrl(row.url, 3600); // 1 hour
+        return data?.signedUrl ?? null;
       }
-    }
-
-    // return () => {
-    //   if (scroll) scroll.destroy();
-    // };
-  }, []);
-
-  // useEffect(() => {
-  //   images.sort(() => Math.random() - 0.5);
-  //   const firstColumnEnd = Math.floor(images.length * 0.22); // 22%
-  //   const secondColumnEnd = Math.floor(images.length * 0.5); // 28%
-  //   const thirdColumnEnd = Math.floor(images.length * 0.68); // 18%
-  //   setFirstColumn(images.slice(0, firstColumnEnd));
-  //   setSecondColumn(images.slice(firstColumnEnd, secondColumnEnd));
-  //   setThirdColumn(images.slice(secondColumnEnd, thirdColumnEnd));
-  //   setFourthColumn(images.slice(thirdColumnEnd));
-  // }, [images]);
-
-  // Slice the images array based on the number of images per column
-  // let secondColumn, thirdColumn, fourthColumn;
-  // setFirstColumn(images.slice(0, firstColumnEnd));
-  // secondColumn = images.slice(firstColumnEnd, secondColumnEnd);
-  // thirdColumn = images.slice(secondColumnEnd, thirdColumnEnd);
-  // fourthColumn = images.slice(thirdColumnEnd, fourthColumnEnd);
-
-  // useEffect(() => {
-  //   let lastTimestamp = performance.now();
-  //   let isManualScrolling = false;
-  //   let requestId: number;
-  //   let timeoutId: any;
-
-  //   function scrollDown(timestamp: number) {
-  //     const deltaTime = timestamp - lastTimestamp;
-  //     const scrollSpeed = 0.04;
-  //     const scrollAmount = scrollSpeed * deltaTime;
-
-  //     if (!isManualScrolling) {
-  //       window.scrollBy({
-  //         top: scrollAmount,
-  //         behavior: "smooth",
-  //       });
-  //     }
-
-  //     lastTimestamp = timestamp;
-  //     requestId = requestAnimationFrame(scrollDown);
-  //   }
-
-  //   const handleScroll = _.debounce(() => {
-  //     if (!isManualScrolling) {
-  //       clearTimeout(timeoutId);
-  //       timeoutId = setTimeout(() => {
-  //         requestId = requestAnimationFrame(scrollDown);
-  //       }, 4000);
-  //     }
-  //   }, 100);
-
-  //   const handleWheel = _.debounce(() => {
-  //     isManualScrolling = true;
-  //     clearTimeout(timeoutId);
-  //     timeoutId = setTimeout(() => {
-  //       isManualScrolling = false;
-  //     }, 4000);
-  //   }, 100);
-
-  //   window.addEventListener("scroll", handleScroll, { passive: true });
-  //   window.addEventListener("wheel", handleWheel, { passive: true });
-
-  //   return () => {
-  //     window.removeEventListener("scroll", handleScroll);
-  //     window.removeEventListener("wheel", handleWheel);
-  //     cancelAnimationFrame(requestId);
-  //     clearTimeout(timeoutId);
-  //   };
-  // }, []);
-
-  function fetchFirstColumn() {
-    setFirstColumn((prevItems) => [...prevItems, ...firstColumn]);
-  }
-  function fetchSecondColumn() {
-    setSecondColumn((prevItems) => [...prevItems, ...secondColumn]);
-  }
-  function fetchThirdColumn() {
-    setThirdColumn((prevItems) => [...prevItems, ...thirdColumn]);
-  }
-  function fetchFourthColumn() {
-    setFourthColumn((prevItems) => [...prevItems, ...fourthColumn]);
-  }
-  function fetchAll() {
-    setVisibleCount((prev) => Math.min(prev + 20, allImages.length));
-  }
-
-  const images = allImages.slice(0, visibleCount);
-  const totalImages = images.length;
-
-  // Calculate the number of images for each column
-  const firstColumnCount = Math.ceil(totalImages * 0.22);
-  const secondColumnCount = Math.ceil(totalImages * 0.28);
-  const thirdColumnCount = Math.ceil(totalImages * 0.18);
-  const fourthColumnCount =
-    totalImages - (firstColumnCount + secondColumnCount + thirdColumnCount);
-
-  const hasMore = visibleCount < allImages.length;
-
-  return (
-    <div>
-      <InfiniteScroll
-        dataLength={images.length}
-        next={fetchAll}
-        hasMore={hasMore}
-        loader={<h4>Loading...</h4>}
-        className="grid grid-cols-4 gap-5"
-      >
-        {/* Render images for the first column */}
-        <div className="flex flex-col gap-4">
-          {images.slice(0, firstColumnCount).map((image, index) => (
-            <motion.div
-              key={index}
-              className="flex aspect-[2/3] justify-center overflow-hidden"
-            >
-              <LazyLoad>
-                <Image
-                  src={image}
-                  alt="Uploaded image"
-                  width={900}
-                  height={400}
-                  className="h-full w-full object-cover"
-                  unoptimized
-                />
-              </LazyLoad>
-            </motion.div>
-          ))}
-        </div>
-
-        {/* Render images for the second column */}
-        <div className="flex flex-col gap-4">
-          {images
-            .slice(firstColumnCount, firstColumnCount + secondColumnCount)
-            .map((image, index) => (
-              <motion.div
-                key={index + firstColumnCount} // Add offset to key to avoid collisions
-                className="flex aspect-[2/3] justify-center overflow-hidden"
-              >
-                <LazyLoad>
-                  <Image
-                    src={image}
-                    alt="Uploaded image"
-                    width={900}
-                    height={400}
-                    className="h-full w-full object-cover"
-                    unoptimized
-                  />
-                </LazyLoad>
-              </motion.div>
-            ))}
-        </div>
-
-        {/* Render images for the third column */}
-        <div className="flex flex-col gap-4">
-          {images
-            .slice(
-              firstColumnCount + secondColumnCount,
-              firstColumnCount + secondColumnCount + thirdColumnCount,
-            )
-            .map((image, index) => (
-              <motion.div
-                key={index + firstColumnCount + secondColumnCount} // Add offset to key
-                className="flex aspect-[2/3] justify-center overflow-hidden"
-              >
-                <LazyLoad>
-                  <Image
-                    src={image}
-                    alt="Uploaded image"
-                    width={900}
-                    height={400}
-                    className="h-full w-full object-cover"
-                    unoptimized
-                  />
-                </LazyLoad>
-              </motion.div>
-            ))}
-        </div>
-
-        {/* Render images for the fourth column */}
-        <div className="flex flex-col gap-4">
-          {images
-            .slice(firstColumnCount + secondColumnCount + thirdColumnCount)
-            .map((image, index) => (
-              <motion.div
-                key={
-                  index +
-                  firstColumnCount +
-                  secondColumnCount +
-                  thirdColumnCount
-                } // Add offset to key
-                className="flex aspect-[2/3] justify-center overflow-hidden"
-              >
-                <LazyLoad>
-                  <Image
-                    src={image}
-                    alt="Uploaded image"
-                    width={900}
-                    height={400}
-                    className="h-full w-full object-cover"
-                    unoptimized
-                  />
-                </LazyLoad>
-              </motion.div>
-            ))}
-        </div>
-      </InfiniteScroll>
-    </div>
-    /* <main className="grid grid-cols-4 gap-5">
-      <div data-scroll-speed={scrollSpeeds.firstColumn} data-scroll>
-        <InfiniteScroll
-          dataLength={firstColumn.length}
-          next={fetchFirstColumn}
-          hasMore={true}
-          loader={<h4>Loading...</h4>}
-          className="flex flex-col gap-5"
-        >
-          {firstColumn?.map((image, index) => {
-            return (
-              <motion.div
-                key={index}
-                className="flex aspect-[2/3] justify-center overflow-hidden"
-              >
-                <LazyLoad>
-                  <Image
-                    src={image}
-                    alt="Uploaded image"
-                    width={900}
-                    height={400}
-                    className="h-full w-full object-cover"
-                  />
-                </LazyLoad>
-              </motion.div>
-            );
-          })}
-        </InfiniteScroll>
-      </div>
-
-      <div data-scroll data-scroll-speed={scrollSpeeds.secondColumn}>
-        <InfiniteScroll
-          dataLength={secondColumn.length}
-          next={fetchSecondColumn}
-          hasMore={true}
-          loader={<h4>Loading...</h4>}
-          className="flex flex-col gap-5"
-        >
-          {secondColumn?.map((image, index) => {
-            return (
-              <motion.div
-                key={index}
-                className="flex aspect-[2/3] justify-center overflow-hidden"
-              >
-                <LazyLoad>
-                  <Image
-                    src={image}
-                    alt="Uploaded image"
-                    width={900}
-                    height={400}
-                    className="h-full w-full object-cover"
-                  />
-                </LazyLoad>
-              </motion.div>
-            );
-          })}
-        </InfiniteScroll>
-      </div>
-
-      <div data-scroll data-scroll-speed={scrollSpeeds.thirdColumn}>
-        <InfiniteScroll
-          dataLength={thirdColumn.length}
-          next={fetchThirdColumn}
-          hasMore={true}
-          loader={<h4>Loading...</h4>}
-          className="flex flex-col gap-5"
-        >
-          {thirdColumn?.map((image, index) => {
-            return (
-              <motion.div
-                key={index}
-                className="flex aspect-[2/3] justify-center overflow-hidden"
-              >
-                <LazyLoad>
-                  <Image
-                    src={image}
-                    alt="Uploaded image"
-                    width={900}
-                    height={900}
-                    className="h-full w-full object-cover"
-                  />
-                </LazyLoad>
-              </motion.div>
-            );
-          })}
-        </InfiniteScroll>
-      </div>
-
-      <div data-scroll data-scroll-speed={scrollSpeeds.fourthColumn}>
-        <InfiniteScroll
-          dataLength={fourthColumn.length}
-          next={fetchFourthColumn}
-          hasMore={true}
-          loader={<h4>Loading...</h4>}
-          className="flex flex-col gap-5"
-        >
-          {fourthColumn?.map((image, index) => {
-            return (
-              <motion.div
-                key={index}
-                className="flex aspect-[2/3] justify-center overflow-hidden"
-              >
-                <LazyLoad>
-                  <Image
-                    src={image}
-                    alt="Uploaded image"
-                    width={900}
-                    height={900}
-                    className="h-full w-full object-cover"
-                  />
-                </LazyLoad>
-              </motion.div>
-            );
-          })}
-        </InfiniteScroll>
-      </div> 
-     </main> */
+      return row.url;
+    }),
   );
-}
 
-export default Preview;
+  // Filter out any nulls (failed signed URL generation) and shuffle once
+  const validUrls = resolvedUrls.filter((url): url is string => url !== null);
+  const shuffled = [...validUrls].sort(() => Math.random() - 0.5);
+
+  return <GalleryClient initialImages={shuffled} />;
+}

@@ -1,11 +1,23 @@
 import { google } from "googleapis";
 import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@/lib/supabase/server";
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: number } },
+  { params }: { params: { id: string } },
 ) {
   try {
+    // ── 1. Authenticate the current user ──────────────────────────────────
+    const supabase = await createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // ── 2. List files from Google Drive ───────────────────────────────────
     const drive = google.drive({
       version: "v3",
       auth: process.env.GOOGLE_DRIVE_API as string,
@@ -19,19 +31,39 @@ export async function GET(
       pageSize: 50,
     });
 
-    const files = driveResponse.data.files;
+    const files = driveResponse.data.files as Array<{
+      id: string;
+      name: string;
+    }>;
 
-    (files as Array<{ id: string; name: string }>).forEach((file) => {
-      const fileId = file.id;
-      const fileName = file.name;
-      console.log(`File ID: ${fileId}, File Name: ${fileName}`);
-    });
+    if (!files || files.length === 0) {
+      return NextResponse.json({ success: true, count: 0 });
+    }
 
-    return NextResponse.json(files);
+    // ── 3. Build thumbnail URLs ───────────────────────────────────────────
+    const rows = files.map((file) => ({
+      user_id: user.id,
+      url: `https://drive.google.com/thumbnail?id=${file.id}&sz=w1000`,
+      source: "gdrive" as const,
+      original_filename: file.name,
+    }));
+
+    // ── 4. Bulk insert into the images table ─────────────────────────────
+    const { error: insertError } = await supabase.from("images").insert(rows);
+
+    if (insertError) {
+      console.error("DB insert error:", insertError);
+      return NextResponse.json(
+        { error: "Failed to save images to database" },
+        { status: 500 },
+      );
+    }
+
+    return NextResponse.json({ success: true, count: rows.length });
   } catch (error) {
     console.error("Error fetching images:", error);
     return NextResponse.json(
-      { message: "Failed to fetch images" },
+      { error: "Failed to fetch images" },
       { status: 500 },
     );
   }
