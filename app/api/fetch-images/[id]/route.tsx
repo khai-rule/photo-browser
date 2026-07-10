@@ -14,7 +14,7 @@ export async function GET(
     const folderId = params.id;
 
     const driveResponse = await drive.files.list({
-      q: `'${folderId}' in parents and mimeType='image/jpeg'`,
+      q: `'${folderId}' in parents and (mimeType='image/jpeg' or mimeType='image/png' or mimeType='image/webp' or mimeType='image/gif')`,
       fields: "files(id, name)",
       pageSize: 50,
     });

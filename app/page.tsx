@@ -1,28 +1,38 @@
 "use client";
-import TransitionLink from "@/components/TransitionLink";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { animatePageOut } from "@/animations";
 
 export default function Home() {
   const [inputValue, setInputValue] = useState("");
+  const [buttonClicked, setButtonClicked] = useState(false);
 
   const router = useRouter();
 
-  const handleFileChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const fileList = event.target.files;
     if (fileList) {
-      const uploadedImages = Array.from(fileList).map((file) =>
-        URL.createObjectURL(file),
-      );
+      const promises = Array.from(fileList).map((file) => {
+        return new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = (error) => reject(error);
+          reader.readAsDataURL(file);
+        });
+      });
 
-      localStorage.setItem("uploadedImages", JSON.stringify(uploadedImages));
+      try {
+        const base64Images = await Promise.all(promises);
+        localStorage.setItem("uploadedImages", JSON.stringify(base64Images));
+        animatePageOut("/preview", router);
+      } catch (error) {
+        console.error("Error reading files:", error);
+      }
     }
-
-    animatePageOut("/preview", router);
   };
 
   function handleButtonClick() {
+    setButtonClicked((prev) => !prev);
     const parts = inputValue.split("/");
     const folderId = parts[parts.length - 1];
 
@@ -44,6 +54,7 @@ export default function Home() {
       })
       .catch((error) => {
         console.error("Error fetching images:", error);
+        setButtonClicked((prev) => !prev);
       });
   }
 
@@ -67,7 +78,11 @@ export default function Home() {
             className="input input-bordered w-full max-w-xs"
             onChange={(event) => setInputValue(event.target.value)}
           />
-          <button className="btn" onClick={handleButtonClick}>
+          <button
+            className="btn"
+            onClick={handleButtonClick}
+            disabled={buttonClicked}
+          >
             Submit
           </button>
         </div>
