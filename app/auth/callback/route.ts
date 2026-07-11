@@ -9,12 +9,17 @@ export async function GET(request: NextRequest) {
 
   if (code) {
     const supabase = await createClient();
+    console.log("URL:", process.env.NEXT_PUBLIC_SUPABASE_URL);
+    console.log("Key present:", !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     if (!error) {
       return NextResponse.redirect(`${origin}${next}`);
+    } else {
+      console.error("OAuth callback error:", error.message);
     }
   }
 
   // Something went wrong — redirect to login with an error flag
+
   return NextResponse.redirect(`${origin}/login?error=true`);
 }
