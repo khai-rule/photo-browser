@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef, useCallback } from "react";
 import Image from "next/image";
-import { motion, LayoutGroup } from "framer-motion";
+import { motion, LayoutGroup, AnimatePresence } from "framer-motion";
 import LazyLoad from "react-lazy-load";
 import InfiniteScroll from "react-infinite-scroll-component";
 
@@ -10,9 +10,16 @@ import InfiniteScroll from "react-infinite-scroll-component";
 
 type LayoutMode = "grid" | "masonry" | "justified";
 
+interface ImageItem {
+  url: string;
+  source: "upload" | "gdrive";
+  original_filename?: string | null;
+  created_at?: string | null;
+}
+
 interface GalleryClientProps {
-  /** Full shuffled list of image URLs, pre-fetched by the server component */
-  initialImages: string[];
+  /** Full shuffled list of image objects, pre-fetched by the server component */
+  initialImages: ImageItem[];
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -108,8 +115,13 @@ function LayoutSwitcher({
 export default function GalleryClient({ initialImages }: GalleryClientProps) {
   const [visibleCount, setVisibleCount] = useState<number>(PAGE_SIZE);
   const [layout, setLayout] = useState<LayoutMode>("grid");
+  const [selectedImageIndex, setSelectedImageIndex] = useState<number | null>(null);
+  
   // Map of image URL → natural aspect ratio (width/height), populated on load
   const [aspectRatios, setAspectRatios] = useState<Record<string, number>>({});
+
+  const modalRef = useRef<HTMLDivElement>(null);
+  const lastActiveElementRef = useRef<HTMLElement | null>(null);
 
   // Hydrate layout preference from localStorage after mount
   useEffect(() => {
@@ -145,6 +157,77 @@ export default function GalleryClient({ initialImages }: GalleryClientProps) {
 
   const images = initialImages.slice(0, visibleCount);
   const hasMore = visibleCount < initialImages.length;
+
+  const navigateLeft = useCallback(() => {
+    setSelectedImageIndex((prev) => {
+      if (prev === null) return null;
+      return prev === 0 ? images.length - 1 : prev - 1;
+    });
+  }, [images.length]);
+
+  const navigateRight = useCallback(() => {
+    setSelectedImageIndex((prev) => {
+      if (prev === null) return null;
+      return prev === images.length - 1 ? 0 : prev + 1;
+    });
+  }, [images.length]);
+
+  // Lock scroll and track focus when lightbox is open
+  useEffect(() => {
+    if (selectedImageIndex !== null) {
+      lastActiveElementRef.current = document.activeElement as HTMLElement;
+      document.body.style.overflow = "hidden";
+      if (modalRef.current) {
+        modalRef.current.focus();
+      }
+    } else {
+      document.body.style.overflow = "";
+      if (lastActiveElementRef.current) {
+        lastActiveElementRef.current.focus();
+      }
+    }
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, [selectedImageIndex]);
+
+  // Handle arrow keys, Escape key, and Tab focus trap inside lightbox
+  useEffect(() => {
+    if (selectedImageIndex === null) return;
+
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        setSelectedImageIndex(null);
+      } else if (e.key === "ArrowLeft") {
+        navigateLeft();
+      } else if (e.key === "ArrowRight") {
+        navigateRight();
+      } else if (e.key === "Tab") {
+        if (!modalRef.current) return;
+        const focusable = modalRef.current.querySelectorAll<HTMLElement>(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+        );
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+
+        if (e.shiftKey) {
+          if (document.activeElement === first) {
+            last.focus();
+            e.preventDefault();
+          }
+        } else {
+          if (document.activeElement === last) {
+            first.focus();
+            e.preventDefault();
+          }
+        }
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [selectedImageIndex, navigateLeft, navigateRight]);
 
   // ── Wrapper className per layout mode ───────────────────────────────────────
   // InfiniteScroll passes this className to its root div.
@@ -188,7 +271,7 @@ export default function GalleryClient({ initialImages }: GalleryClientProps) {
           className={wrapperClass[layout]}
         >
           {images.map((image, index) => {
-            const ratio = aspectRatios[image] ?? 1.5; // default 3:2 until loaded
+            const ratio = aspectRatios[image.url] ?? 1.5; // default 3:2 until loaded
 
             // ── Per-layout card styles ──────────────────────────────────────
 
@@ -212,18 +295,28 @@ export default function GalleryClient({ initialImages }: GalleryClientProps) {
 
             return (
               <motion.div
-                key={image}
+                key={image.url}
                 layoutId={`img-${index}`}
                 layout
-                className={cardClass}
+                className={`${cardClass} focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-base-100 rounded-lg cursor-pointer`}
                 style={cardStyle}
                 transition={SPRING}
+                tabIndex={0}
+                role="button"
+                aria-label={`View image ${index + 1}`}
+                onClick={() => setSelectedImageIndex(index)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setSelectedImageIndex(index);
+                  }
+                }}
               >
                 {layout === "grid" && (
                   <LazyLoad>
                     <Image
-                      src={image}
-                      alt={`Gallery image ${index + 1}`}
+                      src={image.url}
+                      alt={image.original_filename ?? `Gallery image ${index + 1}`}
                       width={500}
                       height={750}
                       className="h-full w-full object-cover"
@@ -237,8 +330,8 @@ export default function GalleryClient({ initialImages }: GalleryClientProps) {
                     {/* plain <img> for height: auto to preserve aspect ratio */}
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                      src={image}
-                      alt={`Gallery image ${index + 1}`}
+                      src={image.url}
+                      alt={image.original_filename ?? `Gallery image ${index + 1}`}
                       className="block h-auto w-full"
                       loading="lazy"
                     />
@@ -249,11 +342,11 @@ export default function GalleryClient({ initialImages }: GalleryClientProps) {
                   // No LazyLoad: we need onLoad to fire for aspect ratio measurement
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
-                    src={image}
-                    alt={`Gallery image ${index + 1}`}
+                    src={image.url}
+                    alt={image.original_filename ?? `Gallery image ${index + 1}`}
                     className="h-full w-full object-cover"
                     loading="lazy"
-                    onLoad={(e) => handleLoad(image, e)}
+                    onLoad={(e) => handleLoad(image.url, e)}
                   />
                 )}
               </motion.div>
@@ -261,6 +354,93 @@ export default function GalleryClient({ initialImages }: GalleryClientProps) {
           })}
         </InfiniteScroll>
       </LayoutGroup>
+
+      {/* Lightbox / Detail View Overlay */}
+      <AnimatePresence>
+        {selectedImageIndex !== null && (
+          <motion.div
+            ref={modalRef}
+            tabIndex={-1}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/90 backdrop-blur-md p-4 md:p-8 outline-none"
+            role="dialog"
+            aria-modal="true"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setSelectedImageIndex(null);
+            }}
+          >
+            {/* Close Button */}
+            <button
+              onClick={() => setSelectedImageIndex(null)}
+              className="absolute top-4 right-4 btn btn-circle btn-ghost text-white hover:bg-white/20 z-50"
+              aria-label="Close lightbox"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+
+            {/* Left Nav Button */}
+            <button
+              onClick={navigateLeft}
+              className="absolute left-4 top-1/2 -translate-y-1/2 btn btn-circle btn-ghost text-white hover:bg-white/20 z-50"
+              aria-label="Previous image"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+            </button>
+            
+            {/* Right Nav Button */}
+            <button
+              onClick={navigateRight}
+              className="absolute right-4 top-1/2 -translate-y-1/2 btn btn-circle btn-ghost text-white hover:bg-white/20 z-50"
+              aria-label="Next image"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
+
+            {/* Image viewport */}
+            <div className="relative flex flex-col items-center justify-center max-w-5xl w-full h-[70vh] md:h-[80vh]">
+              <motion.img
+                key={images[selectedImageIndex].url}
+                src={images[selectedImageIndex].url}
+                alt={images[selectedImageIndex].original_filename ?? "Lightbox image"}
+                className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
+                initial={{ scale: 0.95, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.95, opacity: 0 }}
+                transition={{ duration: 0.25 }}
+              />
+            </div>
+
+            {/* Metadata display */}
+            <div className="mt-4 text-center text-white max-w-xl px-4">
+              <h2 className="text-lg font-semibold truncate">
+                {images[selectedImageIndex].original_filename ?? "Untitled Image"}
+              </h2>
+              <div className="flex flex-wrap items-center justify-center gap-3 mt-1 text-xs opacity-75">
+                <span className="capitalize badge badge-neutral text-xs">
+                  {images[selectedImageIndex].source === "gdrive" ? "Google Drive" : "Upload"}
+                </span>
+                {images[selectedImageIndex].created_at && (
+                  <span>
+                    Uploaded: {new Date(images[selectedImageIndex].created_at!).toLocaleDateString(undefined, {
+                      year: 'numeric',
+                      month: 'long',
+                      day: 'numeric'
+                    })}
+                  </span>
+                )}
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
