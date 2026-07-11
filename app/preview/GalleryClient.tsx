@@ -250,7 +250,7 @@ export default function GalleryClient({ initialImages }: GalleryClientProps) {
   // ─── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <div>
+    <main className="min-h-screen px-8 pb-40 pt-24">
       <LayoutSwitcher current={layout} onChange={changeLayout} />
 
       {/*
@@ -441,6 +441,6 @@ export default function GalleryClient({ initialImages }: GalleryClientProps) {
           </motion.div>
         )}
       </AnimatePresence>
-    </div>
+    </main>
   );
 }
