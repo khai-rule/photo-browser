@@ -5,6 +5,7 @@ import Image from "next/image";
 import { motion, LayoutGroup, AnimatePresence } from "framer-motion";
 import LazyLoad from "react-lazy-load";
 import InfiniteScroll from "react-infinite-scroll-component";
+import ScreensaverGallery from "./ScreensaverGallery";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -27,6 +28,7 @@ interface GalleryClientProps {
 const LAYOUT_KEY = "gallery-layout";
 const PAGE_SIZE = 20;
 const JUSTIFIED_ROW_HEIGHT = 280; // px target row height for justified mode
+const INACTIVITY_TIMEOUT = 5_000; // ms of inactivity before screensaver activates
 
 const SPRING = {
   type: "spring" as const,
@@ -123,6 +125,12 @@ export default function GalleryClient({ initialImages }: GalleryClientProps) {
   const modalRef = useRef<HTMLDivElement>(null);
   const lastActiveElementRef = useRef<HTMLElement | null>(null);
 
+  // ── Screensaver ──────────────────────────────────────────────────────────
+  const [isScreensaver, setIsScreensaver] = useState(false);
+  const inactivityRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isScreensaverRef = useRef(false);    // closure-safe mirror of isScreensaver
+  const lightboxOpenRef = useRef(false);     // closure-safe mirror of selectedImageIndex !== null
+
   // Hydrate layout preference from localStorage after mount
   useEffect(() => {
     const saved = localStorage.getItem(LAYOUT_KEY) as LayoutMode | null;
@@ -130,6 +138,39 @@ export default function GalleryClient({ initialImages }: GalleryClientProps) {
       setLayout(saved);
     }
   }, []);
+
+  // Keep closure-safe refs in sync with React state so the inactivity handler
+  // (which is bound once) always reads the latest values without re-binding.
+  useEffect(() => { isScreensaverRef.current = isScreensaver; }, [isScreensaver]);
+  useEffect(() => {
+    lightboxOpenRef.current = selectedImageIndex !== null;
+  }, [selectedImageIndex]);
+
+  // Inactivity detection — single stable binding; state accessed via refs.
+  useEffect(() => {
+    function schedule() {
+      if (inactivityRef.current) clearTimeout(inactivityRef.current);
+      inactivityRef.current = setTimeout(() => {
+        if (!lightboxOpenRef.current) setIsScreensaver(true);
+      }, INACTIVITY_TIMEOUT);
+    }
+    function onActivity(e: Event) {
+      void e;
+      if (isScreensaverRef.current) setIsScreensaver(false);
+      schedule();
+    }
+    const events = [
+      "mousemove", "mousedown", "keydown", "touchstart", "wheel", "click",
+    ];
+    events.forEach((ev) =>
+      window.addEventListener(ev, onActivity, { passive: true }),
+    );
+    schedule(); // start timer immediately on mount
+    return () => {
+      events.forEach((ev) => window.removeEventListener(ev, onActivity));
+      if (inactivityRef.current) clearTimeout(inactivityRef.current);
+    };
+  }, []); // stable — all state reads go through refs
 
   function changeLayout(mode: LayoutMode) {
     setLayout(mode);
@@ -354,6 +395,25 @@ export default function GalleryClient({ initialImages }: GalleryClientProps) {
           })}
         </InfiniteScroll>
       </LayoutGroup>
+
+      {/* ── Screensaver overlay ─────────────────────────────────────────────
+       * z-20: above gallery (z-0), below TopNav/BottomNav (z-40) and lightbox (z-50).
+       * Fades in after INACTIVITY_TIMEOUT ms, fades out on any user interaction.
+       */}
+      <AnimatePresence>
+        {isScreensaver && (
+          <motion.div
+            key="screensaver"
+            className="fixed inset-0 z-20"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 1.2, ease: "easeInOut" }}
+          >
+            <ScreensaverGallery images={initialImages} />
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Lightbox / Detail View Overlay */}
       <AnimatePresence>
