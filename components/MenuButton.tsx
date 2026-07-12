@@ -2,6 +2,8 @@ import { motion } from "framer-motion";
 import React from "react";
 import ReactCurvedText from "react-curved-text";
 
+const CurvedText = ReactCurvedText as unknown as React.ComponentType<any>;
+
 // ── Props ────────────────────────────────────────────────────────────────────
 
 interface MenuButtonProps {
@@ -14,12 +16,20 @@ interface MenuButtonProps {
 function MenuButton({ onClick, isOpen = false }: MenuButtonProps) {
   return (
     <>
-      <div className="relative" onClick={onClick} role="button" aria-label="Open navigation menu" aria-expanded={isOpen}>
+      <div
+        className="relative"
+        onClick={onClick}
+        role="button"
+        aria-label="Open navigation menu"
+        aria-expanded={isOpen}
+      >
         <motion.div
           className={[
             "relative size-16 cursor-pointer rounded-full bg-primary drop-shadow-md",
             "transition-shadow duration-300",
-            isOpen ? "ring-4 ring-primary/40 ring-offset-2 ring-offset-base-100" : "",
+            isOpen
+              ? "ring-4 ring-primary/40 ring-offset-2 ring-offset-base-100"
+              : "",
           ].join(" ")}
           initial={{ scale: 1 }}
           animate={isOpen ? { scale: 1.05 } : { scale: 1 }}
@@ -40,7 +50,7 @@ function MenuButton({ onClick, isOpen = false }: MenuButtonProps) {
             transition={{ delay: 0.5, duration: 0.5 }}
           >
             <div className="-mt-10">
-              <ReactCurvedText
+              <CurvedText
                 width={80}
                 height={80}
                 cx={40}
