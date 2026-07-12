@@ -2,19 +2,32 @@ import { motion } from "framer-motion";
 import React from "react";
 import ReactCurvedText from "react-curved-text";
 
-function MenuButton() {
+// ── Props ────────────────────────────────────────────────────────────────────
+
+interface MenuButtonProps {
+  onClick?: () => void;
+  isOpen?: boolean;
+}
+
+// ── Component ────────────────────────────────────────────────────────────────
+
+function MenuButton({ onClick, isOpen = false }: MenuButtonProps) {
   return (
     <>
-      <div className="relative">
+      <div className="relative" onClick={onClick} role="button" aria-label="Open navigation menu" aria-expanded={isOpen}>
         <motion.div
-          className="relative size-16 cursor-pointer rounded-full bg-primary drop-shadow-md"
+          className={[
+            "relative size-16 cursor-pointer rounded-full bg-primary drop-shadow-md",
+            "transition-shadow duration-300",
+            isOpen ? "ring-4 ring-primary/40 ring-offset-2 ring-offset-base-100" : "",
+          ].join(" ")}
           initial={{ scale: 1 }}
+          animate={isOpen ? { scale: 1.05 } : { scale: 1 }}
           whileHover={{
             scale: 1.1,
-            position: "relative",
-            transition: { duration: 0.5 },
+            transition: { duration: 0.2 },
           }}
-          transition={{ delay: 0.5, duration: 0.5 }}
+          transition={{ duration: 0.25 }}
         >
           <motion.div
             className="absolute -left-1 -top-1 h-20"
