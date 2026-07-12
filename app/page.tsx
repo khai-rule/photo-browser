@@ -1,492 +1,461 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { animatePageOut } from "@/animations";
+import { motion } from "framer-motion";
+import Image from "next/image";
 import { createClient } from "@/lib/supabase/client";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// ─── Placeholder images from Picsum Photos ────────────────────────────────────
 
-type UploadStatus = "queued" | "uploading" | "done" | "error";
+const SAMPLE_IMAGES = [
+  "https://picsum.photos/300/400?random=1",
+  "https://picsum.photos/400/300?random=2",
+  "https://picsum.photos/350/350?random=3",
+  "https://picsum.photos/300/500?random=4",
+  "https://picsum.photos/500/300?random=5",
+  "https://picsum.photos/320/480?random=6",
+  "https://picsum.photos/400/400?random=7",
+  "https://picsum.photos/280/420?random=8",
+];
 
-interface FileUploadState {
-  id: string;
-  file: File;
-  status: UploadStatus;
-  error?: string;
+// ─── Animation variants ───────────────────────────────────────────────────────
+
+const containerVariants = {
+  hidden: { opacity: 0 },
+  visible: {
+    opacity: 1,
+    transition: {
+      staggerChildren: 0.1,
+      delayChildren: 0.2,
+    },
+  },
+};
+
+const itemVariants = {
+  hidden: { opacity: 0, y: 20 },
+  visible: {
+    opacity: 1,
+    y: 0,
+    transition: { duration: 0.6, ease: "easeOut" },
+  },
+};
+
+// ─── Components ────────────────────────────────────────────────────────────────
+
+function GalleryPreview({ layout }: { layout: "masonry" | "justified" }) {
+  // Simplified gallery preview with sample images
+  return (
+    <div className="relative h-64 w-full overflow-hidden rounded-lg bg-base-200">
+      {layout === "masonry" ? (
+        <div className="columns-3 gap-2 p-3">
+          {SAMPLE_IMAGES.map((src, idx) => (
+            <motion.div
+              key={idx}
+              initial={{ opacity: 0, scale: 0.9 }}
+              whileInView={{ opacity: 1, scale: 1 }}
+              transition={{ delay: idx * 0.05 }}
+              className="mb-2 break-inside-avoid overflow-hidden rounded"
+            >
+              <Image
+                src={src}
+                alt={`Sample ${idx}`}
+                width={100}
+                height={120}
+                unoptimized
+                className="h-auto w-full object-cover"
+              />
+            </motion.div>
+          ))}
+        </div>
+      ) : (
+        <div className="flex h-full items-center gap-2 overflow-x-auto p-3">
+          {SAMPLE_IMAGES.slice(0, 4).map((src, idx) => (
+            <motion.div
+              key={idx}
+              initial={{ opacity: 0, x: -20 }}
+              whileInView={{ opacity: 1, x: 0 }}
+              transition={{ delay: idx * 0.1 }}
+              className="h-full flex-shrink-0"
+            >
+              <Image
+                src={src}
+                alt={`Sample ${idx}`}
+                width={150}
+                height={150}
+                unoptimized
+                className="h-full w-auto rounded object-cover"
+              />
+            </motion.div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
-// ─── Config ───────────────────────────────────────────────────────────────────
+// ─── Main Page ────────────────────────────────────────────────────────────────
 
-const ACCEPTED_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
-const ACCEPTED_LABEL = "JPEG, PNG, WebP, GIF";
-const CONCURRENCY = 3; // max parallel uploads
-
-// ─── Concurrency helper ───────────────────────────────────────────────────────
-// Runs `tasks` array with at most `limit` simultaneously.
-
-async function runConcurrent(tasks: (() => Promise<void>)[], limit: number): Promise<void> {
-  let i = 0;
-  async function worker() {
-    while (i < tasks.length) {
-      const idx = i++;
-      await tasks[idx]();
-    }
-  }
-  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, worker));
-}
-
-// ─── Sub-components ───────────────────────────────────────────────────────────
-
-function StatusBadge({ status }: { status: UploadStatus }) {
-  switch (status) {
-    case "queued":
-      return <span className="badge badge-neutral badge-sm shrink-0">Queued</span>;
-    case "uploading":
-      return <span className="badge badge-info badge-sm shrink-0 animate-pulse">Uploading…</span>;
-    case "done":
-      return (
-        <span className="badge badge-success badge-sm shrink-0">
-          <svg xmlns="http://www.w3.org/2000/svg" className="mr-1 h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
-            <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-          </svg>
-          Done
-        </span>
-      );
-    case "error":
-      return <span className="badge badge-error badge-sm shrink-0">Failed</span>;
-  }
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
-
-// ─── Main page ────────────────────────────────────────────────────────────────
-
-export default function Home() {
-  // Google Drive state (unchanged)
-  const [inputValue, setInputValue] = useState("");
-  const [buttonClicked, setButtonClicked] = useState(false);
-  const [gdriveError, setGdriveError] = useState<string | null>(null);
-
-  // Upload state
-  const [isDragOver, setIsDragOver] = useState(false);
-  const [fileStates, setFileStates] = useState<FileUploadState[]>([]);
-  const [rejectedFiles, setRejectedFiles] = useState<string[]>([]);
-  const [batchStarted, setBatchStarted] = useState(false);
-
-  const fileInputRef = useRef<HTMLInputElement>(null);
+export default function LandingPage() {
   const router = useRouter();
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [layoutMode, setLayoutMode] = useState<"masonry" | "justified">(
+    "masonry",
+  );
 
-  // ── File state helpers ──────────────────────────────────────────────────────
-
-  function updateFile(id: string, update: Partial<FileUploadState>) {
-    setFileStates((prev) =>
-      prev.map((f) => (f.id === id ? { ...f, ...update } : f)),
-    );
-  }
-
-  // ── Core upload logic (single file) ────────────────────────────────────────
-
-  async function uploadFile(entry: FileUploadState) {
-    updateFile(entry.id, { status: "uploading", error: undefined });
-
-    try {
+  // Check authentication and redirect if logged in
+  useEffect(() => {
+    const checkAuth = async () => {
       const supabase = createClient();
       const {
         data: { user },
       } = await supabase.auth.getUser();
 
-      if (!user) throw new Error("Not authenticated — please sign in.");
-
-      // Namespace path by user ID to prevent collisions
-      const path = `${user.id}/${Date.now()}_${entry.file.name}`;
-
-      const { error: storageError } = await supabase.storage
-        .from("gallery-images")
-        .upload(path, entry.file, { upsert: false });
-
-      if (storageError) throw new Error(storageError.message);
-
-      const { error: dbError } = await supabase.from("images").insert({
-        user_id: user.id,
-        url: path,
-        source: "upload",
-        original_filename: entry.file.name,
-      });
-
-      if (dbError) throw new Error(dbError.message);
-
-      updateFile(entry.id, { status: "done" });
-    } catch (err) {
-      updateFile(entry.id, {
-        status: "error",
-        error: err instanceof Error ? err.message : "Upload failed",
-      });
-    }
-  }
-
-  // ── File processing: validate → enqueue → upload ────────────────────────────
-
-  function processFiles(rawFiles: FileList | File[]) {
-    const files = Array.from(rawFiles);
-    const valid: FileUploadState[] = [];
-    const rejected: string[] = [];
-
-    for (const file of files) {
-      if (ACCEPTED_TYPES.has(file.type)) {
-        valid.push({
-          id: `${file.name}-${Date.now()}-${Math.random()}`,
-          file,
-          status: "queued",
-        });
-      } else {
-        rejected.push(file.name);
+      if (user) {
+        setIsAuthenticated(true);
+        // Redirect to library after a brief delay for smooth transition
+        setTimeout(() => router.push("/library"), 100);
       }
-    }
+      setIsLoading(false);
+    };
 
-    setRejectedFiles(rejected);
-    if (valid.length === 0) return;
+    checkAuth();
+  }, [router]);
 
-    // Replace file list for a fresh batch; append if you want accumulation
-    setFileStates(valid);
-    setBatchStarted(true);
-
-    // Fire concurrent uploads — each task captures its own entry snapshot
-    const tasks = valid.map((entry) => () => uploadFile(entry));
-    runConcurrent(tasks, CONCURRENCY);
+  // Handle Google OAuth sign in
+  async function handleGoogleSignIn() {
+    const supabase = createClient();
+    await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: {
+        redirectTo: `${window.location.origin}/auth/callback`,
+        skipBrowserRedirect: false,
+      },
+    });
   }
 
-  // ── Drag & drop handlers ────────────────────────────────────────────────────
-
-  function handleDragOver(e: React.DragEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragOver(true);
+  // Show nothing while checking auth
+  if (isLoading || isAuthenticated) {
+    return null;
   }
-
-  function handleDragLeave(e: React.DragEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    // Only clear if we actually left the zone (not just moved over a child)
-    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
-      setIsDragOver(false);
-    }
-  }
-
-  function handleDrop(e: React.DragEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    setIsDragOver(false);
-    if (e.dataTransfer.files.length > 0) processFiles(e.dataTransfer.files);
-  }
-
-  // ── Derived state ───────────────────────────────────────────────────────────
-
-  const doneCount = fileStates.filter((f) => f.status === "done").length;
-  const errorCount = fileStates.filter((f) => f.status === "error").length;
-  const inFlightCount = fileStates.filter(
-    (f) => f.status === "uploading" || f.status === "queued",
-  ).length;
-  const isAllSettled = batchStarted && inFlightCount === 0 && fileStates.length > 0;
-
-  // ── Google Drive handler (unchanged) ────────────────────────────────────────
-
-  function handleButtonClick() {
-    setButtonClicked(true);
-    setGdriveError(null);
-
-    const parts = inputValue.split("/");
-    const folderId = parts[parts.length - 1];
-
-    fetch(`/api/fetch-images/${folderId}`, {
-      method: "GET",
-      headers: { "Content-Type": "application/json" },
-    })
-      .then((r) => r.json())
-      .then((data) => {
-        if (data.error) throw new Error(data.error);
-        animatePageOut("/preview", router);
-      })
-      .catch((err) => {
-        console.error("Error fetching images:", err);
-        setGdriveError("Failed to import from Google Drive. Check the folder ID.");
-        setButtonClicked(false);
-      });
-  }
-
-  // ─── Render ──────────────────────────────────────────────────────────────────
 
   return (
-    <main className="flex w-full justify-center px-4 py-16">
-      <div className="flex w-full max-w-lg flex-col gap-8">
-
-        {/* Hero heading */}
-        <div>
-          <h1 className="text-xl font-bold">Contact Studio</h1>
-          <p className="mt-1 text-sm opacity-50">
-            Upload photos or import from a Google Drive folder.
-          </p>
-        </div>
-
-        {/* ── Drop Zone ─────────────────────────────────────────────────────── */}
-        <div
-          role="button"
-          tabIndex={0}
-          aria-label="Image drop zone — click to browse or drag and drop files"
-          className={[
-            "relative flex cursor-pointer flex-col items-center justify-center gap-4",
-            "rounded-2xl border-2 border-dashed p-12 text-center",
-            "transition-all duration-200 select-none outline-none",
-            "focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2",
-            isDragOver
-              ? "border-primary bg-primary/10 scale-[1.01] shadow-lg shadow-primary/20"
-              : "border-base-300 hover:border-primary/50 hover:bg-base-200/40",
-          ].join(" ")}
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-          onClick={() => fileInputRef.current?.click()}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") {
-              e.preventDefault();
-              fileInputRef.current?.click();
-            }
-          }}
+    <main className="flex min-h-screen w-full flex-col bg-base-100 text-base-content">
+      {/* ── Hero Section ────────────────────────────────────────────────────── */}
+      <section className="relative flex min-h-screen w-full items-center justify-center px-4 py-16 sm:px-6 lg:px-8">
+        <motion.div
+          className="flex w-full max-w-3xl flex-col items-center gap-12 text-center"
+          variants={containerVariants}
+          initial="hidden"
+          animate="visible"
         >
-          {/* Icon */}
-          <div
-            className={[
-              "flex h-14 w-14 items-center justify-center rounded-full transition-all duration-200",
-              isDragOver ? "bg-primary/20 scale-110" : "bg-base-200",
-            ].join(" ")}
+          {/* Title */}
+          <motion.div variants={itemVariants} className="space-y-4">
+            <h1 className="text-5xl font-bold leading-tight sm:text-6xl lg:text-7xl">
+              Contact Studio
+            </h1>
+            <p className="max-w-2xl text-xl text-base-content/70 sm:text-2xl">
+              Your photos, always on display
+            </p>
+          </motion.div>
+
+          {/* Subtitle */}
+          <motion.p
+            variants={itemVariants}
+            className="max-w-xl text-base text-base-content/60 sm:text-lg"
+          >
+            Organize your favorite moments into albums, explore multiple gallery
+            layouts, and enjoy a beautiful ambient viewing experience. Your
+            photography, reimagined.
+          </motion.p>
+
+          {/* CTA Button */}
+          <motion.button
+            variants={itemVariants}
+            onClick={handleGoogleSignIn}
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.98 }}
+            className="btn btn-primary btn-lg gap-3 px-8 text-lg"
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
-              className={`h-7 w-7 transition-colors duration-200 ${isDragOver ? "text-primary" : "opacity-40"}`}
-              fill="none"
+              width="20"
+              height="20"
               viewBox="0 0 24 24"
-              stroke="currentColor"
             >
               <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={1.5}
-                d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5"
+                fill="#4285F4"
+                d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
               />
-            </svg>
-          </div>
-
-          {/* Text */}
-          <div>
-            <p className="font-semibold">
-              {isDragOver ? "Release to upload" : "Drop images here"}
-            </p>
-            <p className="mt-1 text-sm opacity-50">
-              or <span className="text-primary underline underline-offset-2">browse files</span>
-              {" · "}{ACCEPTED_LABEL}
-            </p>
-          </div>
-
-          {/* Hidden file input */}
-          <input
-            ref={fileInputRef}
-            id="file-upload"
-            type="file"
-            className="sr-only"
-            accept="image/jpeg,image/png,image/webp,image/gif"
-            multiple
-            onChange={(e) => {
-              if (e.target.files?.length) processFiles(e.target.files);
-              // Reset so the same file can be re-selected after a retry
-              e.target.value = "";
-            }}
-          />
-        </div>
-
-        {/* ── Rejected file warning ──────────────────────────────────────────── */}
-        {rejectedFiles.length > 0 && (
-          <div className="alert alert-warning gap-3 py-3">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className="h-5 w-5 shrink-0"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
               <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"
+                fill="#34A853"
+                d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+              />
+              <path
+                fill="#FBBC05"
+                d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
+              />
+              <path
+                fill="#EA4335"
+                d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
               />
             </svg>
-            <div className="min-w-0">
-              <p className="text-sm font-semibold">
-                {rejectedFiles.length} file{rejectedFiles.length > 1 ? "s" : ""} skipped —
-                unsupported format
-              </p>
-              <p className="mt-0.5 truncate text-xs opacity-70">
-                {rejectedFiles.join(", ")}
-              </p>
-            </div>
-          </div>
-        )}
+            Continue with Google
+          </motion.button>
 
-        {/* ── Upload queue ───────────────────────────────────────────────────── */}
-        {fileStates.length > 0 && (
-          <div className="flex flex-col gap-2">
-
-            {/* Summary banner (shown when all done) */}
-            {isAllSettled && (
-              <div
-                className={`alert gap-3 py-3 ${
-                  errorCount === 0 ? "alert-success" : "alert-warning"
+          {/* Preview snippet */}
+          <motion.div variants={itemVariants} className="w-full max-w-2xl">
+            <p className="mb-4 text-sm font-medium uppercase tracking-wide text-base-content/60">
+              Browse multiple layouts
+            </p>
+            <div className="mb-4 flex justify-center gap-2">
+              <button
+                onClick={() => setLayoutMode("masonry")}
+                className={`btn btn-sm gap-1 ${
+                  layoutMode === "masonry" ? "btn-primary" : "btn-ghost"
                 }`}
               >
+                Masonry
+              </button>
+              <button
+                onClick={() => setLayoutMode("justified")}
+                className={`btn btn-sm gap-1 ${
+                  layoutMode === "justified" ? "btn-primary" : "btn-ghost"
+                }`}
+              >
+                Justified rows
+              </button>
+            </div>
+            <GalleryPreview layout={layoutMode} />
+          </motion.div>
+        </motion.div>
+      </section>
+
+      {/* ── Features Section ─────────────────────────────────────────────────── */}
+      <section className="w-full bg-base-200/50 px-4 py-20 sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-5xl">
+          <motion.h2
+            initial={{ opacity: 0, y: 20 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.6 }}
+            className="mb-16 text-center text-3xl font-bold sm:text-4xl"
+          >
+            Everything you need to display your photography
+          </motion.h2>
+
+          <motion.div
+            className="grid gap-8 sm:grid-cols-2"
+            variants={containerVariants}
+            initial="hidden"
+            whileInView="visible"
+            viewport={{ once: true }}
+          >
+            {/* Feature 1 */}
+            <motion.div
+              variants={itemVariants}
+              className="rounded-lg border border-base-300 bg-base-100 p-8 shadow-sm"
+            >
+              <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10 text-primary">
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
-                  className="h-5 w-5 shrink-0"
+                  className="h-6 w-6"
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
                 >
-                  {errorCount === 0 ? (
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"
-                    />
-                  ) : (
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"
-                    />
-                  )}
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
+                  />
                 </svg>
-                <span className="text-sm font-medium">
-                  {errorCount === 0
-                    ? `${doneCount} of ${fileStates.length} uploaded successfully`
-                    : `${doneCount} uploaded · ${errorCount} failed — use Retry below`}
-                </span>
-                {doneCount > 0 && (
-                  <button
-                    className="btn btn-sm btn-ghost ml-auto shrink-0"
-                    onClick={() => animatePageOut("/preview", router)}
-                  >
-                    View gallery →
-                  </button>
-                )}
               </div>
-            )}
+              <h3 className="mb-2 text-xl font-bold">
+                Upload from your computer
+              </h3>
+              <p className="text-base-content/70">
+                Drag and drop or browse files. Supports JPEG, PNG, WebP, and GIF
+                formats for quick imports.
+              </p>
+            </motion.div>
 
-            {/* Per-file list */}
-            <div className="card overflow-hidden bg-base-200">
-              <ul className="divide-y divide-base-300">
-                {fileStates.map((f) => (
-                  <li key={f.id} className="flex items-center gap-3 px-4 py-3">
-                    {/* Thumbnail / file icon */}
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-base-300 text-base-content/30">
-                      <svg
-                        xmlns="http://www.w3.org/2000/svg"
-                        className="h-5 w-5"
-                        viewBox="0 0 20 20"
-                        fill="currentColor"
-                      >
-                        <path
-                          fillRule="evenodd"
-                          d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V7.414A2 2 0 0017.414 6L14 2.586A2 2 0 0012.586 2H6a2 2 0 00-2 2zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z"
-                          clipRule="evenodd"
-                        />
-                      </svg>
-                    </div>
+            {/* Feature 2 */}
+            <motion.div
+              variants={itemVariants}
+              className="rounded-lg border border-base-300 bg-base-100 p-8 shadow-sm"
+            >
+              <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-6 w-6"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+                  />
+                </svg>
+              </div>
+              <h3 className="mb-2 text-xl font-bold">
+                Import from Google Drive
+              </h3>
+              <p className="text-base-content/70">
+                Connect to a Google Drive folder and pull in your photos
+                directly. Perfect for cloud-backed collections.
+              </p>
+            </motion.div>
 
-                    {/* Filename + optional error message */}
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium">{f.file.name}</p>
-                      {f.status === "error" && f.error && (
-                        <p className="truncate text-xs text-error opacity-80">{f.error}</p>
-                      )}
-                    </div>
+            {/* Feature 3 */}
+            <motion.div
+              variants={itemVariants}
+              className="rounded-lg border border-base-300 bg-base-100 p-8 shadow-sm"
+            >
+              <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-6 w-6"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M4 5a2 2 0 012-2h6a2 2 0 012 2v14a2 2 0 01-2 2H6a2 2 0 01-2-2V5z"
+                  />
+                </svg>
+              </div>
+              <h3 className="mb-2 text-xl font-bold">
+                Multiple gallery layouts
+              </h3>
+              <p className="text-base-content/70">
+                Switch between masonry and justified rows. Find the view that
+                best showcases your work.
+              </p>
+            </motion.div>
 
-                    {/* File size */}
-                    <span className="hidden shrink-0 font-mono text-xs opacity-40 sm:block">
-                      {formatBytes(f.file.size)}
-                    </span>
+            {/* Feature 4 */}
+            <motion.div
+              variants={itemVariants}
+              className="rounded-lg border border-base-300 bg-base-100 p-8 shadow-sm"
+            >
+              <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-6 w-6"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"
+                  />
+                </svg>
+              </div>
+              <h3 className="mb-2 text-xl font-bold">Organize into albums</h3>
+              <p className="text-base-content/70">
+                Create albums to group your photos by theme, event, or
+                collection. Browse your library with ease.
+              </p>
+            </motion.div>
 
-                    {/* Status badge */}
-                    <StatusBadge status={f.status} />
-
-                    {/* Retry button */}
-                    {f.status === "error" && (
-                      <button
-                        className="btn btn-xs btn-outline btn-error shrink-0"
-                        onClick={() => uploadFile(f)}
-                      >
-                        Retry
-                      </button>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        )}
-
-        {/* ── Divider ───────────────────────────────────────────────────────── */}
-        <div className="flex items-center gap-3 text-xs opacity-30">
-          <div className="h-px flex-1 bg-current" />
-          <span>or import from Google Drive</span>
-          <div className="h-px flex-1 bg-current" />
+            {/* Feature 5 - wide */}
+            <motion.div
+              variants={itemVariants}
+              className="rounded-lg border border-base-300 bg-base-100 p-8 shadow-sm sm:col-span-2"
+            >
+              <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-6 w-6"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5h.01"
+                  />
+                </svg>
+              </div>
+              <h3 className="mb-2 text-xl font-bold">
+                Ambient screensaver mode
+              </h3>
+              <p className="text-base-content/70">
+                Idle too long? Your gallery auto-scrolls with a gentle, passive
+                browsing experience. Perfect for passive viewing or displaying
+                on a device.
+              </p>
+            </motion.div>
+          </motion.div>
         </div>
+      </section>
 
-        {/* ── Google Drive import (unchanged logic) ─────────────────────────── */}
-        {gdriveError && (
-          <div className="alert alert-error py-3">
+      {/* ── CTA Section ──────────────────────────────────────────────────────── */}
+      <section className="w-full px-4 py-20 sm:px-6 lg:px-8">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6 }}
+          className="mx-auto max-w-2xl text-center"
+        >
+          <h2 className="mb-6 text-3xl font-bold sm:text-4xl">
+            Ready to get started?
+          </h2>
+          <p className="mb-8 text-lg text-base-content/70">
+            Sign in with Google to create your gallery and start sharing your
+            photography.
+          </p>
+          <motion.button
+            onClick={handleGoogleSignIn}
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.98 }}
+            className="btn btn-primary btn-lg gap-3 px-8 text-lg"
+          >
             <svg
               xmlns="http://www.w3.org/2000/svg"
-              className="h-5 w-5 shrink-0"
-              fill="none"
+              width="20"
+              height="20"
               viewBox="0 0 24 24"
-              stroke="currentColor"
             >
               <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                fill="#4285F4"
+                d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+              />
+              <path
+                fill="#34A853"
+                d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+              />
+              <path
+                fill="#FBBC05"
+                d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"
+              />
+              <path
+                fill="#EA4335"
+                d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
               />
             </svg>
-            <span className="text-sm">{gdriveError}</span>
-          </div>
-        )}
+            Continue with Google
+          </motion.button>
+        </motion.div>
+      </section>
 
-        <div className="flex gap-3">
-          <input
-            type="text"
-            placeholder="Google Drive folder ID or URL"
-            className="input input-bordered flex-1"
-            onChange={(e) => setInputValue(e.target.value)}
-          />
-          <button
-            className="btn btn-neutral"
-            onClick={handleButtonClick}
-            disabled={buttonClicked || !inputValue.trim()}
-          >
-            {buttonClicked ? (
-              <span className="loading loading-spinner loading-sm" />
-            ) : (
-              "Import"
-            )}
-          </button>
-        </div>
-
-      </div>
+      {/* ── Footer ────────────────────────────────────────────────────────────── */}
+      <footer className="border-t border-base-300 px-4 py-8 text-center text-sm text-base-content/60 sm:px-6 lg:px-8">
+        <p>&copy; 2025 Contact Studio. A personal photo gallery app.</p>
+      </footer>
     </main>
   );
 }
