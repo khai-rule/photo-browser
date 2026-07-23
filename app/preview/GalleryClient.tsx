@@ -6,16 +6,20 @@ import { motion, LayoutGroup, AnimatePresence } from "framer-motion";
 import LazyLoad from "react-lazy-load";
 import InfiniteScroll from "react-infinite-scroll-component";
 import ScreensaverGallery from "./ScreensaverGallery";
+import { createClient } from "@/lib/supabase/client";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type LayoutMode = "grid" | "masonry" | "justified";
+type LayoutMode = "masonry" | "justified";
 
 interface ImageItem {
+  id: string;
   url: string;
   source: "upload" | "gdrive";
   original_filename?: string | null;
   created_at?: string | null;
+  width?: number | null;
+  height?: number | null;
 }
 
 interface GalleryClientProps {
@@ -84,7 +88,6 @@ function LayoutSwitcher({
   onChange: (m: LayoutMode) => void;
 }) {
   const modes: { mode: LayoutMode; icon: React.ReactNode; label: string }[] = [
-    { mode: "grid",      icon: <IconGrid />,      label: "Grid" },
     { mode: "masonry",   icon: <IconMasonry />,   label: "Masonry" },
     { mode: "justified", icon: <IconJustified />, label: "Justified" },
   ];
@@ -116,7 +119,7 @@ function LayoutSwitcher({
 
 export default function GalleryClient({ initialImages }: GalleryClientProps) {
   const [visibleCount, setVisibleCount] = useState<number>(PAGE_SIZE);
-  const [layout, setLayout] = useState<LayoutMode>("grid");
+  const [layout, setLayout] = useState<LayoutMode>("masonry");
   const [selectedImageIndex, setSelectedImageIndex] = useState<number | null>(null);
   
   // Map of image URL → natural aspect ratio (width/height), populated on load
@@ -130,12 +133,16 @@ export default function GalleryClient({ initialImages }: GalleryClientProps) {
   const inactivityRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isScreensaverRef = useRef(false);    // closure-safe mirror of isScreensaver
   const lightboxOpenRef = useRef(false);     // closure-safe mirror of selectedImageIndex !== null
+  const backfilledRef   = useRef(new Set<string>()); // ids already backfilled, prevent duplicate updates
 
   // Hydrate layout preference from localStorage after mount
   useEffect(() => {
-    const saved = localStorage.getItem(LAYOUT_KEY) as LayoutMode | null;
-    if (saved && ["grid", "masonry", "justified"].includes(saved)) {
+    const saved = localStorage.getItem(LAYOUT_KEY);
+    if (saved === "masonry" || saved === "justified") {
       setLayout(saved);
+    } else if (saved === "grid") {
+      // "grid" layout was removed — fall back to masonry
+      setLayout("masonry");
     }
   }, []);
 
@@ -145,6 +152,12 @@ export default function GalleryClient({ initialImages }: GalleryClientProps) {
   useEffect(() => {
     lightboxOpenRef.current = selectedImageIndex !== null;
   }, [selectedImageIndex]);
+
+  // Immersive mode: hide UI chrome (TopNav, BottomNav) while screensaver is active
+  useEffect(() => {
+    document.body.classList.toggle("screensaver-active", isScreensaver);
+    return () => document.body.classList.remove("screensaver-active");
+  }, [isScreensaver]);
 
   // Inactivity detection — single stable binding; state accessed via refs.
   useEffect(() => {
@@ -191,6 +204,22 @@ export default function GalleryClient({ initialImages }: GalleryClientProps) {
       setAspectRatios((prev) =>
         prev[url] === ratio ? prev : { ...prev, [url]: ratio },
       );
+
+      // Lazy backfill: if stored dimensions are missing, update the DB silently.
+      const entry = initialImages.find((i) => i.url === url);
+      if (
+        entry?.id &&
+        (!entry.width || !entry.height) &&
+        !backfilledRef.current.has(entry.id)
+      ) {
+        backfilledRef.current.add(entry.id);
+        const supabase = createClient();
+        supabase
+          .from("images")
+          .update({ width: img.naturalWidth, height: img.naturalHeight })
+          .eq("id", entry.id)
+          .then(() => {}); // fire and forget
+      }
     }
   }
 
@@ -273,10 +302,15 @@ export default function GalleryClient({ initialImages }: GalleryClientProps) {
   // ── Wrapper className per layout mode ───────────────────────────────────────
   // InfiniteScroll passes this className to its root div.
   const wrapperClass: Record<LayoutMode, string> = {
-    grid:      "grid grid-cols-4 gap-4",
     masonry:   "columns-4 gap-4",
     justified: "flex flex-wrap gap-1",
   };
+
+  // ── Per-image card styles per layout mode ───────────────────────────────────
+  const getCardClass = (l: LayoutMode) => ({
+    masonry:   "overflow-hidden break-inside-avoid mb-4",
+    justified: "overflow-hidden",
+  }[l]);
 
   // ── Early-exit for empty state ──────────────────────────────────────────────
 
@@ -316,11 +350,7 @@ export default function GalleryClient({ initialImages }: GalleryClientProps) {
 
             // ── Per-layout card styles ──────────────────────────────────────
 
-            const cardClass = {
-              grid:      "overflow-hidden aspect-[2/3]",
-              masonry:   "overflow-hidden break-inside-avoid mb-4",
-              justified: "overflow-hidden",
-            }[layout];
+            const cardClass = getCardClass(layout);
 
             // Justified: fixed row height, width grows proportional to aspect ratio
             const cardStyle =
@@ -353,19 +383,6 @@ export default function GalleryClient({ initialImages }: GalleryClientProps) {
                   }
                 }}
               >
-                {layout === "grid" && (
-                  <LazyLoad>
-                    <Image
-                      src={image.url}
-                      alt={image.original_filename ?? `Gallery image ${index + 1}`}
-                      width={500}
-                      height={750}
-                      className="h-full w-full object-cover"
-                      unoptimized
-                    />
-                  </LazyLoad>
-                )}
-
                 {layout === "masonry" && (
                   <LazyLoad>
                     {/* plain <img> for height: auto to preserve aspect ratio */}
@@ -410,7 +427,7 @@ export default function GalleryClient({ initialImages }: GalleryClientProps) {
             exit={{ opacity: 0 }}
             transition={{ duration: 1.2, ease: "easeInOut" }}
           >
-            <ScreensaverGallery images={initialImages} />
+            <ScreensaverGallery images={initialImages} layout={layout} />
           </motion.div>
         )}
       </AnimatePresence>

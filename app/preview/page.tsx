@@ -25,7 +25,7 @@ export default async function PreviewPage() {
   // ── Fetch all image rows for this user ──────────────────────────────────
   const { data: rows, error } = await supabase
     .from("images")
-    .select("url, source, original_filename, created_at")
+    .select("id, url, source, original_filename, created_at, width, height")
     .eq("user_id", user.id)
     .order("created_at", { ascending: false });
 
@@ -46,17 +46,23 @@ export default async function PreviewPage() {
           .createSignedUrl(row.url, 3600); // 1 hour
         if (!data?.signedUrl) return null;
         return {
+          id: row.id,
           url: data.signedUrl,
           source: row.source,
           original_filename: row.original_filename,
           created_at: row.created_at,
+          width: row.width ?? null,
+          height: row.height ?? null,
         };
       }
       return {
+        id: row.id,
         url: row.url,
         source: row.source,
         original_filename: row.original_filename,
         created_at: row.created_at,
+        width: row.width ?? null,
+        height: row.height ?? null,
       };
     }),
   );

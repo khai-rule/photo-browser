@@ -19,7 +19,7 @@ function TopNav() {
   }
 
   return (
-    <div className="fixed top-0 z-40 flex w-full items-center justify-end gap-3 px-8 py-4">
+    <div data-chrome="topnav" className="fixed top-0 z-40 flex w-full items-center justify-end gap-3 px-8 py-4">
       {user && (
         <>
           {/* Avatar */}

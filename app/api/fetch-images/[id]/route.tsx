@@ -27,13 +27,14 @@ export async function GET(
 
     const driveResponse = await drive.files.list({
       q: `'${folderId}' in parents and (mimeType='image/jpeg' or mimeType='image/png' or mimeType='image/webp' or mimeType='image/gif')`,
-      fields: "files(id, name)",
+      fields: "files(id, name, imageMediaMetadata(width,height))",
       pageSize: 50,
     });
 
     const files = driveResponse.data.files as Array<{
       id: string;
       name: string;
+      imageMediaMetadata?: { width?: number; height?: number } | null;
     }>;
 
     if (!files || files.length === 0) {
@@ -46,6 +47,9 @@ export async function GET(
       url: `https://drive.google.com/thumbnail?id=${file.id}&sz=w1000`,
       source: "gdrive" as const,
       original_filename: file.name,
+      // imageMediaMetadata is populated by Drive for JPEG/PNG/WebP; may be null for GIF
+      width:  file.imageMediaMetadata?.width  ?? null,
+      height: file.imageMediaMetadata?.height ?? null,
     }));
 
     // ── 4. Bulk insert into the images table ─────────────────────────────

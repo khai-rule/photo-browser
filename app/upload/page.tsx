@@ -115,7 +115,21 @@ export default function UploadPage() {
     );
   }
 
-  // ── Core upload logic (single file) ────────────────────────────────────────
+// ── Image dimensions helper ──────────────────────────────────────────────────────────
+// Reads natural pixel dimensions via a temporary object URL.
+// Called before the storage upload so dims are ready to insert.
+
+async function getImageDimensions(file: File): Promise<{ width: number; height: number }> {
+  return new Promise((resolve) => {
+    const img = new window.Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => { resolve({ width: img.naturalWidth, height: img.naturalHeight }); URL.revokeObjectURL(url); };
+    img.onerror = () => { resolve({ width: 0, height: 0 }); URL.revokeObjectURL(url); };
+    img.src = url;
+  });
+}
+
+  // ── Core upload logic (single file) ────────────────────────────────────────────
 
   async function uploadFile(entry: FileUploadState) {
     updateFile(entry.id, { status: "uploading", error: undefined });
@@ -127,6 +141,9 @@ export default function UploadPage() {
       } = await supabase.auth.getUser();
 
       if (!user) throw new Error("Not authenticated — please sign in.");
+
+      // Capture dimensions before upload (in-memory file, resolves immediately)
+      const dims = await getImageDimensions(entry.file);
 
       // Namespace path by user ID to prevent collisions
       const path = `${user.id}/${Date.now()}_${entry.file.name}`;
@@ -142,6 +159,8 @@ export default function UploadPage() {
         url: path,
         source: "upload",
         original_filename: entry.file.name,
+        width: dims.width || null,
+        height: dims.height || null,
       });
 
       if (dbError) throw new Error(dbError.message);

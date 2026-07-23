@@ -148,3 +148,16 @@ html.has-scroll-dragging {
   right: auto;
   bottom: 0;
 }
+
+/* ── Screensaver immersive mode ──────────────────────────────────────────────
+ * When screensaver-active is set on <body> by GalleryClient, all UI chrome
+ * (TopNav, BottomNav) fades out smoothly. pointer-events is delayed so
+ * clicks during the fade-out window don't accidentally trigger nav items.
+ */
+[data-chrome] {
+  transition: opacity 1.2s ease;
+}
+body.screensaver-active [data-chrome] {
+  opacity: 0;
+  pointer-events: none;
+}

@@ -255,6 +255,7 @@ function GalleryPreview({ layout }: { layout: "masonry" | "justified" }) {
   );
 }
 
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function LandingPage() {
